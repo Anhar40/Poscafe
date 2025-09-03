@@ -61,10 +61,11 @@ app.use((req, res, next) => {
   }
 
   // Jalankan server hanya jika bukan Vercel
-  if (process.env.VERCEL !== "1") {
+  if (!process.env.NOW_REGION && !process.env.VERCEL_URL) {
+    // berarti lokal, bukan di Vercel
     const port = parseInt(process.env.PORT || "3000", 10);
     app.listen(port, "0.0.0.0", () => {
-      log(`serving on port ${port}`);
+      log(`🚀 Serving locally on http://localhost:${port}`);
     });
   }
 })();
