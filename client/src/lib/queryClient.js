@@ -1,0 +1,110 @@
+import { QueryClient } from "@tanstack/react-query";
+/**
+ * Parsing error response dari server untuk mendapatkan pesan yang lebih informatif
+ */
+async function parseErrorResponse(res) {
+    let errorMessage = `${res.status}: ${res.statusText}`;
+    try {
+        const contentType = res.headers.get("content-type");
+        if (contentType?.includes("application/json")) {
+            const errorData = await res.json();
+            errorMessage = errorData.message || errorMessage;
+        }
+        else {
+            const errorText = await res.text();
+            // Deteksi kalau responsenya HTML (misalnya error page)
+            if (errorText.includes("<!DOCTYPE") || errorText.includes("<html>")) {
+                errorMessage = "Server error occurred. Please try again.";
+            }
+            else {
+                errorMessage = errorText || errorMessage;
+            }
+        }
+    }
+    catch {
+        errorMessage = "Network error or server unavailable";
+    }
+    return errorMessage;
+}
+/**
+ * apiRequest
+ * - Mendukung semua opsi bawaan fetch (RequestInit)
+ * - Otomatis parse JSON bila tersedia
+ * - Menangani error dengan pesan yang lebih jelas
+ * - Meng-include cookie/session secara default
+ */
+export async function apiRequest(url, options = {}) {
+    let finalBody = undefined;
+    if (options.body !== undefined) {
+        if (typeof options.body === "object" && !(options.body instanceof FormData)) {
+            finalBody = JSON.stringify(options.body);
+        }
+        else {
+            finalBody = options.body;
+        }
+    }
+    const res = await fetch(url, {
+        credentials: "include", // penting untuk request yang butuh session
+        headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+        },
+        ...options,
+        body: finalBody,
+    });
+    // Khusus endpoint /auth/user → return null di 401
+    if (res.status === 401 && url.includes("/auth/user")) {
+        return null;
+    }
+    // Kalau status HTTP tidak OK → lempar error
+    if (!res.ok) {
+        throw new Error(await parseErrorResponse(res));
+    }
+    // Cek apakah ada konten JSON
+    const contentLength = res.headers.get("content-length");
+    const contentType = res.headers.get("content-type");
+    if (!contentLength || contentLength === "0" || !contentType?.includes("application/json")) {
+        return {};
+    }
+    try {
+        return (await res.json());
+    }
+    catch {
+        return {};
+    }
+}
+/**
+ * query function generator untuk react-query
+ */
+export const getQueryFn = ({ on401 }) => async ({ queryKey }) => {
+    // Pastikan queryKey adalah array string
+    const url = Array.isArray(queryKey) ? queryKey.join("/") : String(queryKey);
+    try {
+        return await apiRequest(url);
+    }
+    catch (error) {
+        if (on401 === "returnNull" &&
+            error instanceof Error &&
+            error.message.includes("401")) {
+            return null;
+        }
+        throw error;
+    }
+};
+/**
+ * Default query client untuk aplikasi
+ */
+export const queryClient = new QueryClient({
+    defaultOptions: {
+        queries: {
+            queryFn: getQueryFn({ on401: "throw" }),
+            refetchInterval: false,
+            refetchOnWindowFocus: false,
+            staleTime: Infinity,
+            retry: false,
+        },
+        mutations: {
+            retry: false,
+        },
+    },
+});
